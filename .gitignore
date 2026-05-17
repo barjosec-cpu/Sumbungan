@@ -1,4 +1,21 @@
 /assets/uploads/*
 !/assets/uploads/.gitkeep
+
+# OS
 .DS_Store
 Thumbs.db
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+
+# Build / runtime
+logs.txt
+*.log
+vendor/
+node_modules/
+
+# Local env
+.env
+.env.local

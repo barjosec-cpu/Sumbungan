@@ -2,67 +2,84 @@ pipeline {
     agent any
 
     environment {
-        DOCKER_REGISTRY = 'docker.io'
-        IMAGE_NAME = 'sumbungan'
-        DOCKER_CREDENTIALS = credentials('docker-credentials')
-        GIT_REPO = 'https://github.com/barjosec-cpu/Sumbungan.git'
-        GIT_BRANCH = 'main'
+        IMAGE_NAME       = 'sumbungan'
+        IMAGE_TAG        = "${env.BUILD_NUMBER}"
+        TEST_CONTAINER   = "sumbungan_ci_${env.BUILD_NUMBER}"
+        TEST_PORT        = '19080'
+    }
+
+    options {
+        timestamps()
+        timeout(time: 20, unit: 'MINUTES')
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
     }
 
     stages {
         stage('Checkout') {
             steps {
-                echo '=== Checking out code from GitHub ==='
-                git branch: "${GIT_BRANCH}", url: "${GIT_REPO}"
+                echo "=== Checking out ${env.BRANCH_NAME ?: 'main'} ==="
+                checkout scm
+                sh 'ls -la'
+            }
+        }
+
+        stage('PHP Syntax Check') {
+            steps {
+                echo '=== Linting PHP files ==='
+                sh '''
+                    docker run --rm -v "$WORKSPACE":/app -w /app php:8.1-cli sh -c '
+                        set -e
+                        find . -path ./vendor -prune -o -type f -name "*.php" -print | while read f; do
+                            php -l "$f" >/dev/null
+                        done
+                        echo "PHP syntax OK"
+                    '
+                '''
             }
         }
 
         stage('Build Docker Image') {
             steps {
                 echo '=== Building Docker image ==='
-                script {
-                    sh 'docker build -t ${IMAGE_NAME}:latest .'
-                    sh 'docker tag ${IMAGE_NAME}:latest ${IMAGE_NAME}:${BUILD_NUMBER}'
-                }
+                sh 'docker build -t ${IMAGE_NAME}:${IMAGE_TAG} -t ${IMAGE_NAME}:latest .'
+                sh 'docker images ${IMAGE_NAME} --format "table {{.Repository}}\\t{{.Tag}}\\t{{.Size}}\\t{{.CreatedAt}}"'
             }
         }
 
-        stage('Test') {
+        stage('Smoke Test') {
             steps {
-                echo '=== Running tests ==='
-                script {
-                    sh 'docker-compose up -d'
-                    sh 'sleep 10'
-                    sh 'curl http://localhost:8080 || echo "Test failed but continuing"'
-                }
+                echo '=== Smoke testing the built image ==='
+                sh '''
+                    set -e
+                    docker rm -f ${TEST_CONTAINER} >/dev/null 2>&1 || true
+                    docker run -d --name ${TEST_CONTAINER} -p ${TEST_PORT}:80 ${IMAGE_NAME}:${IMAGE_TAG}
+                    for i in $(seq 1 20); do
+                        if docker exec ${TEST_CONTAINER} sh -c "curl -fsS http://localhost/ >/dev/null 2>&1 || wget -q -O- http://localhost/ >/dev/null 2>&1"; then
+                            echo "Container responded after ${i}s"
+                            EXIT=0
+                            break
+                        fi
+                        sleep 1
+                        EXIT=1
+                    done
+                    docker logs ${TEST_CONTAINER} | tail -n 50
+                    docker rm -f ${TEST_CONTAINER}
+                    exit ${EXIT:-0}
+                '''
             }
         }
 
-        stage('Push to Docker Hub') {
+        stage('Build Info') {
             steps {
-                echo '=== Pushing Docker image to registry ==='
-                script {
-                    sh 'echo $DOCKER_CREDENTIALS_PSW | docker login -u $DOCKER_CREDENTIALS_USR --password-stdin'
-                    sh 'docker tag ${IMAGE_NAME}:latest ${DOCKER_CREDENTIALS_USR}/${IMAGE_NAME}:latest'
-                    sh 'docker push ${DOCKER_CREDENTIALS_USR}/${IMAGE_NAME}:latest'
-                }
-            }
-        }
-
-        stage('Deploy') {
-            steps {
-                echo '=== Deploying application ==='
-                script {
-                    sh 'docker-compose down || true'
-                    sh 'docker-compose up -d'
-                    echo 'Application deployed successfully'
-                }
-            }
-        }
-
-        stage('Generate Documentation') {
-            steps {
-                echo '=== Documentation already included in README.md ==='
+                sh '''
+                    echo "=== Build summary ==="
+                    echo "Image:  ${IMAGE_NAME}:${IMAGE_TAG}"
+                    echo "Latest: ${IMAGE_NAME}:latest"
+                    echo "Build:  ${BUILD_NUMBER}"
+                    echo "Job:    ${JOB_NAME}"
+                    docker image inspect ${IMAGE_NAME}:${IMAGE_TAG} --format "Created: {{.Created}} | Size: {{.Size}} bytes"
+                '''
             }
         }
     }
@@ -70,13 +87,13 @@ pipeline {
     post {
         always {
             echo '=== Cleaning up ==='
-            sh 'docker-compose logs > logs.txt || true'
+            sh 'docker rm -f ${TEST_CONTAINER} >/dev/null 2>&1 || true'
         }
         success {
-            echo '=== Pipeline completed successfully ==='
+            echo "BUILD SUCCESS: ${IMAGE_NAME}:${IMAGE_TAG}"
         }
         failure {
-            echo '=== Pipeline failed ==='
+            echo 'BUILD FAILED'
         }
     }
 }
