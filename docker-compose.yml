@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: sumbungan_app
+    ports:
+      - "8080:80"
+    volumes:
+      - .:/var/www/html
+    depends_on:
+      - db
+    environment:
+      - DB_HOST=db
+      - DB_USER=root
+      - DB_PASSWORD=root
+      - DB_NAME=sumbungan
+    networks:
+      - sumbungan_network
+
+  db:
+    image: mysql:8.0
+    container_name: sumbungan_db
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=sumbungan
+      - MYSQL_USER=sumbungan
+      - MYSQL_PASSWORD=sumbungan123
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./sumbungan_db.sql:/docker-entrypoint-initdb.d/sumbungan_db.sql
+    networks:
+      - sumbungan_network
+
+volumes:
+  db_data:
+
+networks:
+  sumbungan_network:
+    driver: bridge
