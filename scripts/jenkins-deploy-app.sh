@@ -12,7 +12,11 @@ mkdir -p backups
 docker compose -p "${COMPOSE_PROJECT}" -f "${COMPOSE_FILE}" stop web db phpmyadmin 2>/dev/null || true
 docker compose -p "${COMPOSE_PROJECT}" -f "${COMPOSE_FILE}" rm -f web db phpmyadmin 2>/dev/null || true
 
-docker compose -p "${COMPOSE_PROJECT}" -f "${COMPOSE_FILE}" up -d --build web db phpmyadmin
+docker compose -p "${COMPOSE_PROJECT}" -f "${COMPOSE_FILE}" up -d --build web db
+
+if ! docker compose -p "${COMPOSE_PROJECT}" -f "${COMPOSE_FILE}" up -d phpmyadmin; then
+  echo "WARNING: phpmyadmin did not start (port 8082 may be busy) - app and db are still deployed"
+fi
 
 echo "Waiting for database..."
 for i in $(seq 1 30); do
@@ -35,5 +39,5 @@ done
 docker ps --filter name=sumbungan_web --filter name=sumbungan_db --filter name=sumbungan_pma
 echo "Deploy complete"
 echo "  App:        http://localhost:8080"
-echo "  PHPMyAdmin: http://localhost:8081"
+echo "  PHPMyAdmin: http://localhost:8082"
 echo "  Jenkins:    http://localhost:9090 (unchanged)"

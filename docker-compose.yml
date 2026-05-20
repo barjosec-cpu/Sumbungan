@@ -49,7 +49,7 @@ services:
     container_name: sumbungan_pma
     restart: unless-stopped
     ports:
-      - "8081:80"
+      - "8082:80"
     environment:
       PMA_HOST: db
       PMA_PORT: 3306
