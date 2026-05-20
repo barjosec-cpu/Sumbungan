@@ -70,27 +70,71 @@ function Wait-JenkinsHttp {
     return $false
 }
 
+function Test-JenkinsJobExists {
+    param([string]$JobName)
+    try {
+        if ($JenkinsToken) {
+            $null = Invoke-JenkinsApi -Uri "$JenkinsUrl/job/$JobName/api/json"
+        } else {
+            $null = Invoke-WebRequest -Uri "$JenkinsUrl/job/$JobName/api/json" -UseBasicParsing -TimeoutSec 10
+        }
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Sync-JenkinsJobs {
+    $container = 'sumbungan_jenkins'
+    if (-not (docker ps --format '{{.Names}}' | Select-String -Pattern '^sumbungan_jenkins$')) {
+        throw 'sumbungan_jenkins is not running - run: scripts\sumbungan.bat jenkins'
+    }
+    Write-Host 'Installing Jenkins jobs from jenkins/jobs/ ...'
+    foreach ($job in @('job1', 'job2', 'job3')) {
+        $src = Join-Path $Root "jenkins\jobs\$job\config.xml"
+        if (-not (Test-Path $src)) { throw "Missing $src" }
+        docker exec -u root $container mkdir -p "/var/jenkins_home/jobs/$job" | Out-Null
+        docker cp $src "${container}:/var/jenkins_home/jobs/$job/config.xml"
+        docker exec -u root $container chown -R jenkins:jenkins "/var/jenkins_home/jobs/$job" | Out-Null
+    }
+    if ($JenkinsToken) {
+        try {
+            $headers = Get-JenkinsHeaders
+            $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+            $crumb = Invoke-RestMethod -Uri "$JenkinsUrl/crumbIssuer/api/json" -Headers $headers -WebSession $session -TimeoutSec 30
+            $headers[$crumb.crumbRequestField] = $crumb.crumb
+            Invoke-WebRequest -Uri "$JenkinsUrl/reload" -Method Post -Headers $headers -WebSession $session -UseBasicParsing -TimeoutSec 60 | Out-Null
+            Start-Sleep -Seconds 8
+            return
+        } catch {
+            Write-Host '  Jenkins reload via API failed; restarting container...'
+        }
+    }
+    docker restart $container | Out-Null
+    if (-not (Wait-JenkinsHttp)) { throw 'Jenkins did not come back after restart' }
+    Start-Sleep -Seconds 10
+}
+
 function Wait-JenkinsJobsSeeded {
     param([int]$TimeoutSec = 120)
     $jobs = @('job1', 'job2', 'job3')
+    $synced = $false
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
-    Write-Host 'Waiting for auto-created Jenkins jobs (job1, job2, job3)...'
+    Write-Host 'Checking Jenkins jobs (job1, job2, job3)...'
     while ((Get-Date) -lt $deadline) {
-        $found = 0
-        foreach ($j in $jobs) {
-            try {
-                $null = Invoke-WebRequest -Uri "$JenkinsUrl/job/$j/api/json" -UseBasicParsing -TimeoutSec 5
-                $found++
-            } catch { }
-        }
+        $found = @($jobs | Where-Object { Test-JenkinsJobExists -JobName $_ }).Count
         if ($found -eq 3) {
-            Write-Host '  All jobs ready (seeded on Jenkins startup).'
+            Write-Host '  All jobs ready.'
             return $true
+        }
+        if (-not $synced) {
+            Sync-JenkinsJobs
+            $synced = $true
+            continue
         }
         Start-Sleep -Seconds 5
     }
-    Write-Warning 'Jobs not all visible yet - they seed on first Jenkins start. Open http://localhost:9090 and refresh.'
-    return $false
+    throw 'Jenkins jobs job1/job2/job3 not available. Check http://localhost:9090'
 }
 
 function Start-JenkinsStack {
@@ -99,7 +143,7 @@ function Start-JenkinsStack {
     docker compose -f docker-compose.jenkins.yml up -d --build
     if ($LASTEXITCODE -ne 0) { throw 'Jenkins failed to start' }
     if (-not (Wait-JenkinsHttp)) { throw "Jenkins not ready at $JenkinsUrl" }
-    Wait-JenkinsJobsSeeded | Out-Null
+    Wait-JenkinsJobsSeeded | Out-Null  # syncs jobs from jenkins/jobs/ if missing
 }
 
 function Start-AppStack {
@@ -179,12 +223,24 @@ function Get-JenkinsLastBuildNumber {
 function Invoke-JenkinsBuild {
     param([string]$JobName)
     Write-Host "Triggering $JobName ..."
-    $headers = Get-JenkinsHeaders
-    $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
-    $crumb = Invoke-RestMethod -Uri "$JenkinsUrl/crumbIssuer/api/json" -Headers $headers -WebSession $session
-    $headers[$crumb.crumbRequestField] = $crumb.crumb
     $before = Get-JenkinsLastBuildNumber -JobName $JobName
-    Invoke-WebRequest -Uri "$JenkinsUrl/job/$JobName/build" -Method Post -Headers $headers -WebSession $session -UseBasicParsing | Out-Null
+    $lastErr = $null
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        try {
+            $headers = Get-JenkinsHeaders
+            $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+            $crumb = Invoke-RestMethod -Uri "$JenkinsUrl/crumbIssuer/api/json" -Headers $headers -WebSession $session -TimeoutSec 30
+            $headers[$crumb.crumbRequestField] = $crumb.crumb
+            Invoke-WebRequest -Uri "$JenkinsUrl/job/$JobName/build" -Method Post -Headers $headers -WebSession $session -UseBasicParsing -TimeoutSec 60 | Out-Null
+            $lastErr = $null
+            break
+        } catch {
+            $lastErr = $_
+            Write-Host "  Build trigger retry $attempt/5..."
+            Start-Sleep -Seconds 5
+        }
+    }
+    if ($lastErr) { throw $lastErr }
     $deadline = (Get-Date).AddSeconds(300)
     while ((Get-Date) -lt $deadline) {
         if ((Get-JenkinsLastBuildNumber -JobName $JobName) -gt $before) {
@@ -245,7 +301,7 @@ function Invoke-CiCdPipeline {
         throw "Jenkins not running at $JenkinsUrl - run: scripts\sumbungan.bat jenkins"
     }
 
-    Wait-JenkinsJobsSeeded | Out-Null
+    Wait-JenkinsJobsSeeded | Out-Null  # syncs jobs from jenkins/jobs/ if missing
 
     $j1b = Get-JenkinsLastBuildNumber -JobName 'job1'
     $j2b = Get-JenkinsLastBuildNumber -JobName 'job2'
