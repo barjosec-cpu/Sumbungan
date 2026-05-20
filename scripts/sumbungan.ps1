@@ -120,33 +120,42 @@ function Invoke-GitHubPush {
 
     Write-Host "Pushing to GitHub ($GithubRepo branch $TargetBranch)..."
 
-    if (-not (git config user.name 2>$null)) {
-        git config user.name 'Jenkins CI'
-        git config user.email 'jenkins@sumbungan.local'
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+
+    try {
+        if (-not (git config user.name 2>$null)) {
+            git config user.name 'Jenkins CI' 2>&1 | Out-Null
+            git config user.email 'jenkins@sumbungan.local' 2>&1 | Out-Null
+        }
+
+        $remote = "https://x-access-token:${GithubToken}@github.com/${GithubRepo}.git"
+
+        $hasChanges = $false
+        git diff-index --quiet HEAD -- 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { $hasChanges = $true }
+        elseif (git status --porcelain 2>&1) { $hasChanges = $true }
+
+        if ($hasChanges) {
+            git add -A 2>&1 | Out-Null
+            git commit -m $CommitMessage 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'git commit failed' }
+        } else {
+            Write-Host 'No local changes to commit'
+        }
+
+        git fetch $remote $TargetBranch 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            git rebase FETCH_HEAD 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Rebase failed - resolve conflicts locally' }
+        }
+
+        git push $remote "HEAD:${TargetBranch}" 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'GitHub push failed' }
+        Write-Host 'GitHub push OK'
+    } finally {
+        $ErrorActionPreference = $prevEap
     }
-
-    $remote = "https://x-access-token:${GithubToken}@github.com/${GithubRepo}.git"
-
-    $hasChanges = $false
-    if (-not (git diff-index --quiet HEAD -- 2>$null)) { $hasChanges = $true }
-    elseif (git status --porcelain) { $hasChanges = $true }
-
-    if ($hasChanges) {
-        git add -A
-        git commit -m $CommitMessage
-    } else {
-        Write-Host 'No local changes to commit'
-    }
-
-    git fetch $remote $TargetBranch 2>$null
-    if ($LASTEXITCODE -eq 0) {
-        git rebase FETCH_HEAD 2>$null
-        if ($LASTEXITCODE -ne 0) { throw 'Rebase failed - resolve conflicts locally' }
-    }
-
-    git push $remote "HEAD:${TargetBranch}"
-    if ($LASTEXITCODE -ne 0) { throw 'GitHub push failed' }
-    Write-Host 'GitHub push OK'
 }
 
 function Get-JenkinsHeaders {
