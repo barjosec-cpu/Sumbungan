@@ -283,4 +283,4 @@ Query `metric`: `summary` | `daily` | `by_type` | `by_status` | `top_locations` 
 ## License
 
 Proprietary — Sumbungan team.
-scripts\sumbungan.bat cicd "CI/CD automated push"
+cd "c:\xampp\htdocs\Sumbungan"; scripts\sumbungan.bat cicd "CI/CD automated push"
