@@ -24,8 +24,10 @@
     <hudson.tasks.Shell>
       <command>#!/bin/bash
 set -eux
-bash /var/jenkins_home/ci-scripts/jenkins-checkout.sh
-bash /var/jenkins_home/ci-scripts/jenkins-deploy-app.sh
+run_ci() { sed 's/\r$//' "$1" | bash; }
+
+run_ci /var/jenkins_home/ci-scripts/jenkins-checkout.sh
+run_ci /var/jenkins_home/ci-scripts/jenkins-deploy-app.sh
 </command>
     </hudson.tasks.Shell>
   </builders>

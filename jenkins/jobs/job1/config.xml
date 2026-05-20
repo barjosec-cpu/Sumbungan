@@ -24,8 +24,9 @@
     <hudson.tasks.Shell>
       <command>#!/bin/bash
 set -eux
+run_ci() { sed 's/\r$//' "$1" | bash; }
 
-bash /var/jenkins_home/ci-scripts/jenkins-checkout.sh
+run_ci /var/jenkins_home/ci-scripts/jenkins-checkout.sh
 
 echo "======================================"
 echo "Job1 - Sumbungan Build #${BUILD_NUMBER}"
