@@ -13,6 +13,10 @@ Barangay Desk Integration System — a PHP/MySQL web application for managing ba
 - [Local Development (XAMPP)](#local-development-xampp)
 - [Database](#database)
 - [CI/CD with Jenkins](#cicd-with-jenkins)
+- [Environment & configuration](#environment--configuration)
+- [Localhost URLs (quick reference)](#localhost-urls-quick-reference)
+- [Docker services](#docker-services)
+- [Setup status](#setup-status)
 - [Environment Variables](#environment-variables)
 - [Troubleshooting](#troubleshooting)
 
@@ -49,10 +53,17 @@ Sumbungan/
 ├── sql/                # SQL helper scripts
 ├── sumbungan_db.sql    # Database schema + seed data
 ├── index.php           # App entry point
-├── Dockerfile          # PHP + Apache image
-├── docker-compose.yml  # App + MySQL stack
-├── Jenkinsfile         # CI pipeline
-└── .htaccess           # Apache rewrite rules
+├── docker/                 # Apache/PHP config + Jenkins image
+├── jenkins/jobs/           # job1 build, job2 test, job3 deploy
+├── scripts/                # CI/CD automation (GitHub + Jenkins)
+├── Dockerfile              # PHP + Apache image
+├── docker-compose.yml      # App + MySQL + phpMyAdmin
+├── docker-compose.jenkins.yml
+├── docker-compose.ci.yml
+├── Jenkinsfile             # Orchestrates job1 → job2 → job3
+├── .env.example            # GitHub + Jenkins tokens
+├── QUICKSTART.md           # CI/CD quick start
+└── .htaccess               # Apache rewrite rules
 ```
 
 ## Quick Start (Docker)
@@ -73,10 +84,11 @@ docker compose up -d --build
 
 Services started:
 
-| Service       | Container        | Host port |
-| ------------- | ---------------- | --------- |
-| App (Apache)  | `sumbungan_app`  | `8080`    |
-| MySQL 8       | `sumbungan_db`   | `3307`    |
+| Service       | Container         | Host port |
+| ------------- | ----------------- | --------- |
+| App (Apache)  | `sumbungan_web`   | `8080`    |
+| MySQL 8       | `sumbungan_db`    | `3307`    |
+| phpMyAdmin    | `sumbungan_pma`   | `8081`    |
 
 Stop:
 
@@ -99,76 +111,199 @@ docker compose down -v
 
 ## Database
 
-- Default database: `sumbungan`
-- Schema and seed data: `sumbungan_db.sql` (auto-imported by Docker on first start)
-- Default Docker credentials:
-  - `root` / `root`
-  - `sumbungan` / `sumbungan123`
+| Environment | Database name | Host | Port | User / password |
+| ----------- | ------------- | ---- | ---- | --------------- |
+| Docker | `sumbungan` | `db` (in container) / `127.0.0.1` (from host) | `3307` | `root` / `root` |
+| XAMPP | `sumbungan_db` | `localhost` | `3306` | `root` / *(empty)* |
 
-Connect from the host:
+- Schema and seed data: `sumbungan_db.sql` (auto-imported by Docker on first start into `sumbungan`)
+- Docker app user (optional): `sumbungan` / `sumbungan123`
+
+Connect from the host (Docker):
 
 ```bash
 mysql -h 127.0.0.1 -P 3307 -u root -proot sumbungan
 ```
 
-## CI/CD with Jenkins
+## CI/CD with Jenkins (same as hrms-main reference)
 
-This repository ships with a `Jenkinsfile` that runs a 5-stage pipeline:
+Automated **GitHub push** + **Jenkins** (3 jobs) + **Docker** — see `QUICKSTART.md` and `JENKINS_CI_CD_SETUP.md`.
 
-1. **Checkout** — pull source from Git
-2. **PHP Syntax Check** — `php -l` on every `.php` file (using a throwaway PHP container)
-3. **Build Docker Image** — `docker build -t sumbungan:<build> -t sumbungan:latest .`
-4. **Smoke Test** — start the built image, hit `http://localhost/` from inside the container, fail on non-2xx
-5. **Build Info** — print image metadata
+### Quick start
 
-### Requirements on the Jenkins host
+```powershell
+copy .env.example .env
+# Set GITHUB_TOKEN, JENKINS_API_TOKEN, GITHUB_REPO=barjosec-cpu/Sumbungan
 
-The Jenkins agent must have access to the Docker daemon. The recommended setup is the official `jenkins/jenkins:lts` image with the host Docker socket mounted **and** the Docker CLI installed inside.
+scripts\complete-setup.bat
+scripts\ci-cd-auto.bat "CI/CD automated push"
+```
+
+### Pipeline flow
+
+| Step | What runs |
+| ---- | --------- |
+| GitHub | `scripts/github-auto-push.*` commits and pushes to `GITHUB_REPO` |
+| job1 | PHP lint + `docker build` → image `sumbungan-app` |
+| job2 | DB health + smoke test via `docker-compose.ci.yml` (port 8888) |
+| job3 | `docker compose up` app on http://localhost:8080 |
+
+Jenkins runs in its **own** compose file (port **9090**) so deploys never stop the CI server:
+
+```powershell
+docker compose -f docker-compose.jenkins.yml up -d --build
+```
+
+`Jenkinsfile` can orchestrate job1 → job2 → job3 for a multibranch/pipeline job.
+
+## Environment & configuration
+
+Copy `.env.example` to `.env` for CI/CD tokens (GitHub, Jenkins). Database settings:
+
+| File | Purpose |
+| ---- | ------- |
+| `config/database.php` | Reads `DB_*` env vars (Docker) or XAMPP defaults |
+| `docker-compose.yml` | Env vars for the `web` container |
+| `.env` | `GITHUB_TOKEN`, `JENKINS_API_TOKEN`, `GITHUB_REPO`, MySQL passwords |
+
+### XAMPP defaults (`config/database.php`)
+
+| Setting | Value |
+| ------- | ----- |
+| Host | `localhost` |
+| Database | `sumbungan_db` |
+| User | `root` |
+| Password | *(empty)* |
+
+### Docker defaults (`docker-compose.yml` → app container)
+
+| Setting | Value |
+| ------- | ----- |
+| Host | `db` (MySQL service name on the Docker network) |
+| Database | `sumbungan` |
+| User | `root` |
+| Password | `root` |
+
+> **Important:** Docker MySQL creates the database `sumbungan`. XAMPP typically uses `sumbungan_db` (from `sumbungan_db.sql`). These are two separate databases on two separate MySQL instances.
+
+---
+
+## Localhost URLs (quick reference)
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  Sumbungan App (Docker)     →  http://localhost:8080             │
+│  Sumbungan App (XAMPP)      →  http://localhost/Sumbungan/       │
+│  Jenkins UI                 →  http://localhost:9090             │
+│  Jenkins jobs               →  job1, job2, job3                    │
+│  phpMyAdmin (Docker)        →  http://localhost:8081             │
+│  phpMyAdmin (XAMPP)         →  http://localhost/phpmyadmin       │
+│  MySQL via Docker           →  localhost:3307  (root / root)     │
+│  MySQL via XAMPP            →  localhost:3306  (root / no pass)  │
+│  GitHub repo                →  https://github.com/barjosec-cpu/Sumbungan │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+| URL | What it serves |
+| --- | -------------- |
+| http://localhost:8080 | App in Docker (`sumbungan_web`) |
+| http://localhost/Sumbungan/ | App via XAMPP Apache |
+| http://localhost:9090 | Jenkins (`sumbungan_jenkins`) |
+| http://localhost:9090/job/job1/ | Build job |
+| http://localhost:8081 | phpMyAdmin (Docker stack) |
+| http://localhost/phpmyadmin | XAMPP database admin |
+
+---
+
+## Docker services
+
+### Running containers
+
+| Container | Image | Host ports |
+| --------- | ----- | ---------- |
+| `sumbungan_web` | `sumbungan-app` | `8080` → 80 |
+| `sumbungan_db` | `mysql:8.0` | `3307` → 3306 |
+| `sumbungan_pma` | `phpmyadmin:5` | `8081` → 80 |
+| `sumbungan_jenkins` | `sumbungan-jenkins:lts` | `9090` → 8080 |
+
+Start the app stack:
 
 ```bash
-docker run -d --name jenkins --restart unless-stopped ^
-  -p 8081:8080 -p 50000:50000 ^
-  -u root ^
-  -v jenkins_home:/var/jenkins_home ^
-  -v /var/run/docker.sock:/var/run/docker.sock ^
-  jenkins/jenkins:lts
+docker compose up -d --build
 ```
 
-After the container is up, install the Docker CLI inside it:
+Start Jenkins (separate stack):
+
+```powershell
+scripts\start-jenkins.bat
+```
+
+### Connect to Docker MySQL from the host
 
 ```bash
-docker exec -u 0 jenkins bash -c "apt-get update && apt-get install -y docker.io"
+mysql -h 127.0.0.1 -P 3307 -u root -proot sumbungan
 ```
 
-### Creating the pipeline job
+Tables created on first run: `users`, `complaints`, `barangay_settings`, `complaint_timeline`, `notifications`.
 
-1. Go to `http://localhost:8081`
-2. **New Item** → name `Sumbungan` → **Pipeline** → OK
-3. Under **Pipeline**:
-   - Definition: *Pipeline script from SCM*
-   - SCM: *Git*
-   - Repository URL: `https://github.com/barjosec-cpu/Sumbungan.git`
-   - Branch: `*/main`
-   - Script Path: `Jenkinsfile`
-4. **Save** → **Build Now**
+### Jenkins built images
 
-A successful build produces local images:
+After job1:
 
 ```
-sumbungan:latest
-sumbungan:<BUILD_NUMBER>
+sumbungan-app:latest
+sumbungan-app:<BUILD_NUMBER>
 ```
+
+---
+
+## Setup status
+
+Use this checklist to confirm everything is working.
+
+| Item | Status | Notes |
+| ---- | ------ | ----- |
+| GitHub repo | OK | https://github.com/barjosec-cpu/Sumbungan |
+| `Dockerfile` | OK | PHP 8.1 + Apache |
+| `docker-compose.yml` | OK | App + MySQL on ports 8080 / 3307 |
+| Jenkins + Docker CI/CD | Setup | job1/job2/job3 at http://localhost:9090 (see QUICKSTART.md) |
+| XAMPP app (`/Sumbungan/`) | OK | Uses `sumbungan_db` on port 3306 |
+| Docker app (`:8080`) | Check DB | Pages load; login/dashboard need `config/database.php` aligned with Docker (`db` / `sumbungan` / `root` / `root`) |
+
+### Config alignment (Docker vs XAMPP)
+
+| Setting | XAMPP (`config/database.php`) | Docker (`docker-compose.yml`) |
+| ------- | ------------------------------ | ----------------------------- |
+| Host | `localhost` | `db` |
+| Database | `sumbungan_db` | `sumbungan` |
+| User | `root` | `root` |
+| Password | *(empty)* | `root` |
+
+For Docker, `config/database.php` must use the Docker values (or read from environment variables). For XAMPP, keep the XAMPP defaults above.
+
+`config/database.php` already uses `getenv('DB_*')` so Docker picks up `docker-compose.yml` values and XAMPP keeps the `sumbungan_db` default without a `.env` file.
+
+---
 
 ## Environment Variables
 
-The app reads these env vars (with sensible defaults for local dev):
+Set in `docker-compose.yml` for the `web` service (read by `config/database.php` in Docker):
 
-| Variable      | Default       | Purpose                |
-| ------------- | ------------- | ---------------------- |
-| `DB_HOST`     | `db`          | MySQL host             |
-| `DB_USER`     | `root`        | MySQL user             |
-| `DB_PASSWORD` | `root`        | MySQL password         |
-| `DB_NAME`     | `sumbungan`   | Database name          |
+| Variable | Docker value | Purpose |
+| -------- | ------------ | ------- |
+| `DB_HOST` | `db` | MySQL host (Docker service name) |
+| `DB_USER` | `root` | MySQL user |
+| `DB_PASSWORD` | `root` | MySQL password |
+| `DB_NAME` | `sumbungan` | Database name |
+
+MySQL service env (`db` container):
+
+| Variable | Value |
+| -------- | ----- |
+| `MYSQL_ROOT_PASSWORD` | `root` |
+| `MYSQL_DATABASE` | `sumbungan` |
+| `MYSQL_USER` | `sumbungan` |
+| `MYSQL_PASSWORD` | `sumbungan123` |
 
 ## Troubleshooting
 
@@ -180,9 +315,17 @@ The app reads these env vars (with sensible defaults for local dev):
 docker compose down -v && docker compose up -d --build
 ```
 
-**Jenkins build fails with `docker: not found`** — install the Docker CLI inside the Jenkins container (see [Requirements on the Jenkins host](#requirements-on-the-jenkins-host)).
+**Jenkins build fails with `docker: not found`** — use `docker-compose.jenkins.yml` (includes Docker CLI). Start with `scripts/start-jenkins.ps1`.
 
-**Jenkins build fails with `permission denied` on `/var/run/docker.sock`** — start the Jenkins container with `-u root` or add the `jenkins` user to the host's `docker` group (matching GID).
+**Jenkins `permission denied` on docker.sock** — the custom Jenkins entrypoint adds the `jenkins` user to the socket group (same as hrms-main).
+
+**Docker app loads but login/API fails** — ensure `config/database.php` uses env vars; restart: `docker compose restart web`.
+
+**`ERR_CONNECTION_REFUSED` on port 9090** — run `docker compose -f docker-compose.jenkins.yml up -d`.
+
+**CI smoke test fails** — free port 8888; run `docker compose -p sumbungan_ci down -v`.
+
+**Port 8080 wrong service** — check `docker ps` for `sumbungan_web`.
 
 ---
 

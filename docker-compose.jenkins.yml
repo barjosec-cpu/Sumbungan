@@ -1,0 +1,43 @@
+# Jenkins only - separate project/network so app "compose down" never stops Jenkins
+name: sumbungan-jenkins
+
+services:
+  jenkins:
+    build:
+      context: ./docker/jenkins
+      dockerfile: Dockerfile
+    image: sumbungan-jenkins:lts
+    container_name: sumbungan_jenkins
+    restart: unless-stopped
+    ports:
+      - "9090:8080"
+      # Agent port omitted locally — avoids clash with other Jenkins (e.g. hrms on 50000)
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./jenkins/jobs:/usr/share/jenkins/ref/jobs-seed:ro
+      - ./docker/jenkins/init.groovy.d:/usr/share/jenkins/ref/init.groovy.d:ro
+      - ./scripts:/var/jenkins_home/ci-scripts:ro
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      JAVA_OPTS: "-Xmx2048m -Djenkins.install.runSetupWizard=false"
+      JENKINS_JAVA_OPTIONS: "-Dhudson.security.csrf.protection.enabled=true"
+      COMPOSE_PROJECT_NAME: sumbungan
+    networks:
+      - jenkins_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/login"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+volumes:
+  jenkins_home:
+    driver: local
+
+networks:
+  jenkins_net:
+    driver: bridge

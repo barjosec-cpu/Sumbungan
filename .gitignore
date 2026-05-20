@@ -1,21 +1,27 @@
-/assets/uploads/*
-!/assets/uploads/.gitkeep
+# Reference copy (local only)
+hrms-main/
 
-# OS
-.DS_Store
-Thumbs.db
+# Uploads and user-generated content
+assets/uploads/*
+!assets/uploads/.gitkeep
 
-# Editors / IDEs
+# IDE and editor files
 .vscode/
 .idea/
 *.swp
+*.swo
+*~
 
-# Build / runtime
-logs.txt
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
 *.log
-vendor/
-node_modules/
+logs/
+backups/
 
-# Local env
+# Environment files
 .env
 .env.local

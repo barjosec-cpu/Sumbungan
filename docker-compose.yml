@@ -1,42 +1,68 @@
-version: '3.8'
-
 services:
-  app:
-    build: .
-    container_name: sumbungan_app
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sumbungan-app:latest
+    container_name: sumbungan_web
+    restart: unless-stopped
     ports:
       - "8080:80"
-    volumes:
-      - .:/var/www/html
-    depends_on:
-      - db
     environment:
-      - DB_HOST=db
-      - DB_USER=root
-      - DB_PASSWORD=root
-      - DB_NAME=sumbungan
+      DB_HOST: db
+      DB_NAME: ${MYSQL_DATABASE:-sumbungan}
+      DB_USER: root
+      DB_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+    volumes:
+      - ./assets/uploads:/var/www/html/assets/uploads
+    depends_on:
+      db:
+        condition: service_healthy
     networks:
-      - sumbungan_network
+      - sumbungan_net
 
   db:
     image: mysql:8.0
     container_name: sumbungan_db
+    restart: unless-stopped
     environment:
-      - MYSQL_ROOT_PASSWORD=root
-      - MYSQL_DATABASE=sumbungan
-      - MYSQL_USER=sumbungan
-      - MYSQL_PASSWORD=sumbungan123
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-sumbungan}
+      MYSQL_USER: ${MYSQL_USER:-sumbungan}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-sumbungan123}
     ports:
       - "3307:3306"
     volumes:
-      - db_data:/var/lib/mysql
-      - ./sumbungan_db.sql:/docker-entrypoint-initdb.d/sumbungan_db.sql
+      - sumbungan_db_data:/var/lib/mysql
+      - ./sumbungan_db.sql:/docker-entrypoint-initdb.d/01-sumbungan_db.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-root}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
     networks:
-      - sumbungan_network
+      - sumbungan_net
+
+  phpmyadmin:
+    image: phpmyadmin:5
+    container_name: sumbungan_pma
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    environment:
+      PMA_HOST: db
+      PMA_PORT: 3306
+      UPLOAD_LIMIT: 64M
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - sumbungan_net
 
 volumes:
-  db_data:
+  sumbungan_db_data:
 
 networks:
-  sumbungan_network:
+  sumbungan_net:
     driver: bridge

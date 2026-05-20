@@ -1,0 +1,20 @@
+# CI override — runs alongside the always-on Sumbungan stack.
+#
+# Two collisions to defeat:
+#   1. container_name: in the base file is literal; we rename to *_ci.
+#   2. Compose merges list fields (ports) instead of replacing them, so we use
+#      !override / !reset (Compose v2.24+) to actually drop the base ports.
+#
+# The smoke test only curls web on 8888 and web talks to db via the internal
+# sumbungan_net, so db/phpmyadmin don't need to publish host ports at all in CI.
+services:
+  web:
+    container_name: sumbungan_web_ci
+    ports: !override
+      - "8888:80"
+  db:
+    container_name: sumbungan_db_ci
+    ports: !reset []
+  phpmyadmin:
+    container_name: sumbungan_pma_ci
+    ports: !reset []
